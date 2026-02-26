@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AutoShip — Deployment Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+    header { background: #1e293b; border-bottom: 1px solid #334155; padding: 1rem 2rem; display: flex; align-items: center; gap: 1rem; }
+    header h1 { font-size: 1.5rem; color: #38bdf8; }
+    .badge { background: #22c55e; color: #fff; padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.75rem; }
+    main { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 0.75rem; padding: 1.5rem; margin-bottom: 1.5rem; }
+    .card h2 { color: #94a3b8; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.1em; margin-bottom: 1rem; }
+    .info-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; }
+    .info-item label { display: block; color: #64748b; font-size: 0.75rem; margin-bottom: 0.25rem; }
+    .info-item span { color: #f1f5f9; font-weight: 500; }
+    .deployment { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 0; border-bottom: 1px solid #334155; }
+    .deployment:last-child { border-bottom: none; }
+    .dep-name { font-weight: 600; color: #f1f5f9; }
+    .dep-meta { color: #64748b; font-size: 0.8rem; margin-top: 0.2rem; }
+    .status { padding: 0.2rem 0.7rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+    .status.running { background: #14532d; color: #4ade80; }
+    .status.deploying { background: #713f12; color: #fbbf24; }
+    form { display: flex; flex-direction: column; gap: 0.75rem; }
+    input, select { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; padding: 0.6rem 0.9rem; border-radius: 0.5rem; font-size: 0.95rem; }
+    button { background: #0ea5e9; color: white; border: none; padding: 0.7rem 1.5rem; border-radius: 0.5rem; font-size: 1rem; cursor: pointer; font-weight: 600; transition: background 0.2s; }
+    button:hover { background: #0284c7; }
+    #message { margin-top: 0.75rem; padding: 0.6rem 1rem; border-radius: 0.5rem; display: none; }
+    #message.success { background: #14532d; color: #4ade80; display: block; }
+    #message.error { background: #7f1d1d; color: #fca5a5; display: block; }
+    .health-dot { width: 10px; height: 10px; background: #22c55e; border-radius: 50%; display: inline-block; animation: pulse 2s infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="health-dot"></div>
+    <h1>⚓ AutoShip</h1>
+    <span class="badge">LIVE</span>
+  </header>
+
+  <main>
+    <div class="card" id="info-card">
+      <h2>System Info</h2>
+      <div class="info-grid" id="info-grid">Loading...</div>
+    </div>
+
+    <div class="card">
+      <h2>Active Deployments</h2>
+      <div id="deployments-list">Loading...</div>
+    </div>
+
+    <div class="card">
+      <h2>Trigger New Deployment</h2>
+      <form id="deploy-form">
+        <input type="text" id="app" placeholder="App name (e.g. payment-service)" required />
+        <input type="text" id="version" placeholder="Version (e.g. v2.1.0)" required />
+        <select id="environment">
+          <option value="staging">Staging</option>
+          <option value="production">Production</option>
+        </select>
+        <button type="submit">🚀 Deploy</button>
+      </form>
+      <div id="message"></div>
+    </div>
+  </main>
+
+  <script>
+    async function fetchInfo() {
+      const res = await fetch('/api/info');
+      const { data } = await res.json();
+      document.getElementById('info-grid').innerHTML = `
+        <div class="info-item"><label>App</label><span>${data.appName}</span></div>
+        <div class="info-item"><label>Node Version</label><span>${data.nodeVersion}</span></div>
+        <div class="info-item"><label>Environment</label><span>${data.environment}</span></div>
+        <div class="info-item"><label>Commit SHA</label><span>${data.commitSha.slice(0,7)}</span></div>
+        <div class="info-item"><label>Build Time</label><span>${data.buildTime}</span></div>
+      `;
+    }
+
+    async function fetchDeployments() {
+      const res = await fetch('/api/deployments');
+      const { data } = await res.json();
+      const list = document.getElementById('deployments-list');
+      list.innerHTML = data.map(d => `
+        <div class="deployment">
+          <div>
+            <div class="dep-name">${d.app} <code style="color:#7dd3fc">${d.version}</code></div>
+            <div class="dep-meta">${d.environment} · ${new Date(d.deployedAt).toLocaleString()}</div>
+          </div>
+          <span class="status ${d.status}">${d.status}</span>
+        </div>
+      `).join('');
+    }
+
+    document.getElementById('deploy-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const msg = document.getElementById('message');
+      const body = {
+        app: document.getElementById('app').value,
+        version: document.getElementById('version').value,
+        environment: document.getElementById('environment').value,
+      };
+      try {
+        const res = await fetch('/api/deployments', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        });
+        const json = await res.json();
+        if (json.success) {
+          msg.className = 'success';
+          msg.textContent = `✅ Deployment triggered for ${body.app}@${body.version}`;
+          setTimeout(fetchDeployments, 2500);
+          e.target.reset();
+        }
+      } catch (err) {
+        msg.className = 'error';
+        msg.textContent = '❌ Deployment failed. Check logs.';
+      }
+    });
+
+    fetchInfo();
+    fetchDeployments();
+    // Auto-refresh deployments every 5 seconds
+    setInterval(fetchDeployments, 5000);
+  </script>
+</body>
+</html>
