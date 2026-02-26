@@ -1,0 +1,118 @@
+name: AutoShip CI/CD Pipeline
+
+# Trigger this pipeline on every push to main or pull request
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# Environment variables available to all jobs
+env:
+  IMAGE_NAME: autoship
+  REGISTRY: ghcr.io                          # GitHub Container Registry
+
+jobs:
+  # ── JOB 1: Test ───────────────────────────────────────────────
+  test:
+    name: 🧪 Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'                        # cache npm for speed
+
+      - name: Install dependencies
+        run: npm ci                           # ci is faster and stricter than install
+
+      - name: Run tests
+        run: npm test
+
+  # ── JOB 2: Build & Push Docker Image ─────────────────────────
+  build:
+    name: 🐳 Build Docker Image
+    runs-on: ubuntu-latest
+    needs: test                              # only runs if tests pass
+    permissions:
+      contents: read
+      packages: write                        # needed to push to ghcr.io
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}  # auto-provided by GitHub
+
+      - name: Extract Docker metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=sha-            # tag with commit SHA
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}  # don't push on PRs
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+            COMMIT_SHA=${{ github.sha }}
+
+  # ── JOB 3: Deploy (Simulated) ─────────────────────────────────
+  deploy:
+    name: 🚀 Deploy Container
+    runs-on: ubuntu-latest
+    needs: build                             # only runs after successful build
+    if: github.ref == 'refs/heads/main'     # only deploy from main branch
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy with Docker Compose
+        env:
+          BUILD_TIME: ${{ github.event.head_commit.timestamp }}
+          COMMIT_SHA: ${{ github.sha }}
+          NODE_ENV: production
+        run: |
+          # Pull the freshly built image
+          export IMAGE_TAG=sha-$(echo ${{ github.sha }} | cut -c1-7)
+          echo "Deploying image tag: $IMAGE_TAG"
+          
+          # Start the container
+          docker compose up -d --build
+          
+          # Wait for container to be healthy
+          echo "Waiting for health check..."
+          sleep 10
+          
+          # Verify the app is running
+          curl -f http://localhost:3000/health || exit 1
+          echo "✅ Deployment successful!"
+
+      - name: Print container logs
+        if: always()
+        run: docker compose logs
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down
