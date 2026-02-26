@@ -93,6 +93,7 @@ jobs:
           BUILD_TIME: ${{ github.event.head_commit.timestamp }}
           COMMIT_SHA: ${{ github.sha }}
           NODE_ENV: production
+          PORT: 3000
         run: |
           # Pull the freshly built image
           export IMAGE_TAG=sha-$(echo ${{ github.sha }} | cut -c1-7)
